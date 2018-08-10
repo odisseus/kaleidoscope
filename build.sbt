@@ -8,14 +8,15 @@ lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .settings(publishSettings: _*)
   .settings(scalaMacroDependencies: _*)
   .settings(moduleName := "kaleidoscope")
+  .settings(libraryDependencies ++= Seq("com.propensive" %% "contextual" % "1.1.0"))
   .settings(
     scalaVersion := crossScalaVersions.value.head
   )
   .jvmSettings(
-    crossScalaVersions := "2.12.4" :: "2.13.0-M3" :: "2.11.12" :: Nil
+    crossScalaVersions := "2.12.4" :: "2.13.0-M4" :: "2.11.12" :: Nil
   )
   .jsSettings(
-    crossScalaVersions := "2.12.4" :: "2.11.12" :: Nil
+    crossScalaVersions := "2.12.4" :: "2.13.0-M4" :: "2.11.12" :: Nil
   )
   .nativeSettings(
     crossScalaVersions := "2.11.12" :: Nil
@@ -25,8 +26,23 @@ lazy val coreJVM = core.jvm
 lazy val coreJS = core.js
 lazy val coreNative = core.native
 
+lazy val tests = project
+  .in(file("tests"))
+  .settings(buildSettings: _*)
+  .settings(unmanagedSettings)
+  .settings(moduleName := "kaleidoscope-tests")
+  .settings(libraryDependencies ++= Seq(
+    "com.propensive" %% "contextual" % "1.1.0",
+    "com.propensive" %% "contextual-data" % "1.1.0"
+  ))
+  .settings(
+    addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.1" cross CrossVersion.full),
+    initialCommands in console := """import kaleidoscope.tests._; import kaleidoscope._;""",
+  )
+  .dependsOn(coreJVM)
+
 lazy val root = (project in file("."))
-  .aggregate(coreJVM, coreJS, coreNative)
+  .aggregate(coreJVM, coreJS, coreNative, tests)
   .settings(
     publish := {},
     publishLocal := {}
@@ -40,14 +56,23 @@ lazy val buildSettings = Seq(
     "-deprecation",
     "-feature",
     "-Xfuture",
-    "-Xexperimental",
     "-Ywarn-value-discard",
     "-Ywarn-dead-code",
-    "-Ywarn-nullary-unit",
     "-Ywarn-numeric-widen",
-    "-Ywarn-inaccessible",
-    "-Ywarn-adapted-args"
   ),
+  scalacOptions ++= {
+    CrossVersion.partialVersion(scalaVersion.value) match {
+      case Some((2, v)) if v <= 12 =>
+        Seq(
+          "-Xexperimental",
+          "-Ywarn-nullary-unit",
+          "-Ywarn-inaccessible",
+          "-Ywarn-adapted-args"
+        )
+      case _ =>
+        Nil
+    }
+  },
   scmInfo := Some(
     ScmInfo(url("https://github.com/propensive/kaleidoscope"),
             "scm:git:git@github.com:propensive/kaleidoscope.git")
@@ -55,7 +80,7 @@ lazy val buildSettings = Seq(
 )
 
 lazy val publishSettings = Seq(
-  homepage := Some(url("https://github.com/propensive/kaleidoscope/")),
+  homepage := Some(url("http://propensive.com/")),
   licenses := Seq("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0.txt")),
   autoAPIMappings := true,
   publishMavenStyle := true,
@@ -75,19 +100,18 @@ lazy val publishSettings = Seq(
       <developer>
         <id>propensive</id>
         <name>Jon Pretty</name>
-        <url>https://github.com/propensive/</url>
+        <url>https://github.com/propensive/kaleidoscope/</url>
       </developer>
     </developers>
   )
 )
 
-lazy val unmanagedSettings = unmanagedBase := (scalaVersion.value
-  .split("\\.")
-  .map(_.toInt)
-  .to[List] match {
-  case List(2, 12, _) => baseDirectory.value / "lib" / "2.12"
-  case List(2, 11, _) => baseDirectory.value / "lib" / "2.11"
-})
+lazy val unmanagedSettings = unmanagedBase :=
+  baseDirectory.value / "lib" /
+    (CrossVersion.partialVersion(scalaVersion.value) match {
+      case Some((2, 11)) => "2.11"
+      case _             => "2.12"
+    })
 
 lazy val scalaMacroDependencies: Seq[Setting[_]] = Seq(
   libraryDependencies += "org.scala-lang" % "scala-reflect" % scalaVersion.value,

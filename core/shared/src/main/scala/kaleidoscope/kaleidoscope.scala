@@ -1,17 +1,22 @@
-/* Kaleidoscope, version 0.1.0. Copyright 2018 Jon Pretty, Propensive Ltd.
- *
- * The primary distribution site is: http://propensive.com/
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the
- * License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
- * either express or implied. See the License for the specific language governing permissions
- * and limitations under the License.
- */
+/*
+  
+  Kaleidoscope, version 0.2.0. Copyright 2018 Jon Pretty, Propensive Ltd.
+
+  The primary distribution site is: https://propensive.com/
+
+  Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+  this file except in compliance with the License. You may obtain a copy of the
+  License at
+  
+      http://www.apache.org/licenses/LICENSE-2.0
+ 
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+  License for the specific language governing permissions and limitations under
+  the License.
+
+*/
 package kaleidoscope
 
 import language.experimental.macros
@@ -21,11 +26,51 @@ import java.util.concurrent.ConcurrentHashMap
 
 private[kaleidoscope] object Macros {
 
-  /** macro implementation to generate the extractor AST for the given pattern */
-  def unapply(c: whitebox.Context)(scrutinee: c.Tree): c.Tree = {
+  private def abort[Ctx <: whitebox.Context](c: Ctx)(msg: String): Nothing =
+    c.abort(c.enclosingPosition, s"kaleidoscope: $msg")
+
+  def intUnapply(c: whitebox.Context)(scrutinee: c.Tree): c.Tree = {
     import c.universe._
 
-    val q"$_($_(..$partTrees)).r.$method[..$_](..$args)" = c.macroApplication
+    val q"$_($_(..$partTrees)).$_.$method[..$_](..$args)" = c.macroApplication
+    val parts = partTrees.map { case lit@Literal(Constant(s: String)) => s }
+
+    if(parts.length > 1) abort(c)("only literal extractions are permitted")
+    try BigInt(parts.head)
+    catch { case e: NumberFormatException => abort(c)("this is not a valid BigInt")
+    }
+
+    q"""new {
+      def unapply(input: _root_.scala.math.BigInt): _root_.scala.Boolean = {
+        input == BigInt(${parts.head})
+      }
+    }.unapply(..$args)"""
+  }
+  
+  def decimalUnapply(c: whitebox.Context)(scrutinee: c.Tree): c.Tree = {
+    import c.universe._
+
+    val q"$_($_(..$partTrees)).$_.$method[..$_](..$args)" = c.macroApplication
+    val parts = partTrees.map { case lit@Literal(Constant(s: String)) => s }
+
+    if(parts.length > 1) abort(c)("only literal extractions are permitted")
+    try BigDecimal(parts.head)
+    catch { case e: NumberFormatException =>
+      abort(c)("this is not a valid BigDecimal")
+    }
+
+    q"""new {
+      def unapply(input: _root_.scala.math.BigDecimal): _root_.scala.Boolean = {
+        input == BigDecimal(${parts.head})
+      }
+    }.unapply(..$args)"""
+  }
+  
+  /** macro implementation to generate the extractor AST for the given pattern */
+  def stringUnapply(c: whitebox.Context)(scrutinee: c.Tree): c.Tree = {
+    import c.universe._
+
+    val q"$_($_(..$partTrees)).$_.$method[..$_](..$args)" = c.macroApplication
     val parts = partTrees.map { case lit@Literal(Constant(s: String)) => s }
     val positions = partTrees.map { case lit@Literal(_) => lit.pos }
    
@@ -37,7 +82,7 @@ private[kaleidoscope] object Macros {
 
     parts.tail.foreach { p =>
       if(p.length < 2 || p.head != '@' || p(1) != '(')
-        c.abort(c.enclosingPosition, "kaleidoscope: variable must be bound to a capturing group")
+        abort(c)("variable must be bound to a capturing group")
     }
     
     val groups = parts.map(parsePart).inits.map(_.sum).to[List].reverse.tail
@@ -94,10 +139,23 @@ private[kaleidoscope] object Macros {
 
 object `package` {
   /** provides the `r` extractor on strings for creating regular expression pattern matches */
-  implicit class RegexStringContext(sc: StringContext) {
+  implicit class KaleidoscopeContext(sc: StringContext) {
     object r {
       /** returns an unapply extractor for the pattern described by the string context */
-      def unapply(scrutinee: String): Any = macro Macros.unapply
+      def unapply(scrutinee: String): Any = macro Macros.stringUnapply
+    }
+
+    object regex {
+      /** returns an unapply extractor for the pattern described by the string context */
+      def unapply(scrutinee: String): Any = macro Macros.stringUnapply
+    }
+
+    object d {
+      def unapply(scrutinee: BigDecimal): Any = macro Macros.decimalUnapply
+    }
+    
+    object i {
+      def unapply(scrutinee: BigInt): Any = macro Macros.intUnapply
     }
   }
 }
