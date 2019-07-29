@@ -20,6 +20,8 @@
 package kaleidoscope
 
 import contextual._
+import scala.language.experimental.macros
+import scala.reflect.macros.whitebox._
 
 object binary {
 
