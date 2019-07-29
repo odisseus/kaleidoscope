@@ -70,9 +70,18 @@ private[kaleidoscope] object Macros {
   def stringUnapply(c: whitebox.Context)(scrutinee: c.Tree): c.Tree = {
     import c.universe._
 
+    println
+    println("-----------------------------------------")
+    println(c.macroApplication)
+    println
+
     val q"$_($_(..$partTrees)).$_.$method[..$_](..$args)" = c.macroApplication
     val parts = partTrees.map { case lit@Literal(Constant(s: String)) => s }
     val positions = partTrees.map { case lit@Literal(_) => lit.pos }
+
+    println("Part trees:")
+    partTrees.foreach(p => println(s"`$p`"))
+    println
 
     // This method counts the number of groups found in the regex. However,
     // there are some constructs that look like groups but aren't, which need
@@ -82,23 +91,44 @@ private[kaleidoscope] object Macros {
     // See "Special constructs (named-capturing and non-capturing)" on
     // https://docs.oracle.com/javase/8/docs/api/java/util/regex/Pattern.html
     // for the complete list.
-    def parsePart(part: String): Int = part.tails.map(_.take(3).drop(1)).zip(part.tails.map(_.take(1))).foldLeft((false, 0)) {
-      case ((esc, cnt), (_, "(")) if esc => (false, cnt)
-      case ((_, cnt), ("?<", "(")) => (false, cnt + 1) // named, capturing group
-      case ((_, cnt), (maybeGroup, "(")) if maybeGroup.startsWith("?") => (false, cnt) // not a group or non-capturing group
-      case ((_, cnt), (_, "(")) => (false, cnt + 1) // definitely a group
-      case ((esc, cnt), (_, "\\")) => (!esc, cnt)
-      case ((_, cnt), _) => (false, cnt)
-    }._2
+    def countGroups(part: String): Int = {
+      val (_, count) = part.tails.map{ tail =>
+        tail.take(1) -> tail.take(3).drop(1)
+      }.foldLeft((false, 0)) {
+        case ((esc, cnt), ("(", _)) if esc => (false, cnt)
+        case ((_, cnt), ("(", "?<")) => (false, cnt + 1) // named, capturing group
+        case ((_, cnt), ("(", maybeGroup)) if maybeGroup.startsWith("?") => (false, cnt) // not a group or non-capturing group
+        case ((_, cnt), ("(", _)) => (false, cnt + 1) // definitely a group
+        case ((esc, cnt), ("\\", _)) => (!esc, cnt)
+        case ((_, cnt), _) => (false, cnt)
+      }
+      count
+    }
 
     parts.tail.foreach { p =>
       if(p.length < 2 || p.head != '@' || p(1) != '(')
         abort(c)("variable must be bound to a capturing group")
     }
+
+    println("Parts:")
+    parts.foreach(p => println(s"`$p`"))
+    println
+
+    println("Groups per part:")
+    parts.map(countGroups).foreach(println)
+    println
     
-    val groups = parts.map(parsePart).inits.map(_.sum).to[List].reverse.tail
+    val cumulativeGroupsPerPart = parts.map(countGroups).inits.map(_.sum).to[List].reverse.tail
+
+    println("Total groups per part and previous parts:")
+    cumulativeGroupsPerPart.foreach(g => println(s"$g"))
+    println
 
     val pattern = (parts.head :: parts.tail.map(_.tail)).mkString
+
+    println("Pattern:")
+    println(pattern)
+    println
     
     def findPosition(xs: List[String], err: Int, str: Int): Position = {
       xs match {
@@ -109,22 +139,26 @@ private[kaleidoscope] object Macros {
       }
     }
     
-    val groupCalls = (1 until groups.length).map { idx =>
+    val groupCalls = (1 until cumulativeGroupsPerPart.length).map { idx =>
       val term = TermName("_"+idx)
-      q"""def $term: _root_.java.lang.String = matcher.group(${groups(idx)})"""
+      q"""def $term: _root_.java.lang.String = matcher.group(${cumulativeGroupsPerPart(idx-1)+1})"""
     }
+
+    println("Group calls:")
+    groupCalls.foreach(println)
+    println
 
     try Pattern.compile(pattern) catch {
       case e: PatternSyntaxException =>
         c.abort(findPosition(parts, e.getIndex, 0), s"kaleidoscope: ${e.getDescription} in pattern")
     }
 
-    def getDef = groups.length match {
-      case 2 => q"def get = matcher.group(${groups(1)})"
+    def getDef = parts.length match {
+      case 2 => q"def get = matcher.group(${cumulativeGroupsPerPart(0)+1})"
       case _ => q"def get = this"
     }
 
-    if(groups.length == 1) q"""new {
+    if(cumulativeGroupsPerPart.length == 1) q"""new {
       def unapply(input: _root_.java.lang.String): _root_.scala.Boolean = {
         val m = _root_.kaleidoscope.Kaleidoscope.pattern($pattern).matcher(input)
         m.matches()
